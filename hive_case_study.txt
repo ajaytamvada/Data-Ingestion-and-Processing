@@ -1,0 +1,448 @@
+--
+ADD JAR /opt/cloudera/parcels/CDH/lib/hive/lib/hive-hcatalog-core-1.1.0-cdh5.11.2.jar;
+
+
+
+
+--  Before partitioning any table, make sure you run the below commands:-
+SET hive.exec.max.dynamic.partitions=100000;
+SET hive.exec.max.dynamic.partitions.pernode=100000;
+
+
+create external table if not exists assignment_nytaxi_aj.nyc_taxi(
+VendorID int,
+tpep_pickup_datetime timestamp,
+tpep_dropoff_datetime timestamp,
+passenger_count int,
+trip_distance decimal(10,2),
+RatecodeID int,
+store_and_fwd_flag string,
+PULocationID int,
+DOLocationID int,
+payment_type int,
+fare_amount decimal(10,2),
+extra decimal(10,2),
+mta_tax decimal(10,2),
+tip_amount decimal(10,2),
+tolls_amount decimal(10,2),
+improvement_surcharge decimal(10,2),
+total_amount decimal(10,2)
+
+)
+
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/common_folder/nyc_taxi_data/'
+tblproperties ("skip.header.line.count"="1"); 
+
+select * from nyc_taxi;
+select count(*) from nyc_taxi;
+-- Total number of records- 1174569
+
+-- Basic Data Quality Checks:
+
+-- Q1.How many records has each TPEP provider provided? Write a query that summarises the number of records of each provider.
+select vendorid,count(*) 
+from assignment_nytaxi_aj.nyc_taxi
+group by vendorid;
+
+-- vendorid 2(VeriFone INC)- 647183 records
+-- vendorid 1(Creative Mobile Technologies)- 527386 records
+
+-- Q2.The data provided is for months November and December only. Check whether the data is consistent, and if not, identify the data quality issues.
+--    Mention all data quality issues in comments.
+
+-- Checking the tpep_pickup_datetime column:
+
+select  year(tpep_pickup_datetime) as pickup_year, month(tpep_pickup_datetime)as pickup_month, count(*)as numofRecords
+from assignment_nytaxi_aj.nyc_taxi
+group by year(tpep_pickup_datetime), month(tpep_pickup_datetime)
+order by pickup_year, pickup_month;
+
+-- pickup_year  pickup_month   numofrecords
+-- 2003           1               1
+-- 2008           12              2
+-- 2009           1               1
+-- 2017           10              6
+-- 2017           11              580300
+-- 2017           12              594255
+-- 2018           1                4
+
+-- Analysis should be done only for the months November and December of the year 2017. So there are 14 records that are not needed and can be dropped.
+
+-- Checking the tpep_dropoff_datetime column:
+
+select year(tpep_dropoff_datetime) as dropoff_year, month(tpep_dropoff_datetime) as dropoff_month, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by year(tpep_dropoff_datetime), month(tpep_dropoff_datetime)
+order by dropoff_year, dropoff_month;
+
+-- dropoff_year  dropoff_month  numofrecords
+-- 2003              1              1
+-- 2008             12              1
+-- 2009              1              2
+-- 2017             10              2
+-- 2017             11              580053
+-- 2017             12              594399
+-- 2018              1              110
+-- 2019              4              1
+
+-- Analysis should be done only for the months November and December of the year 2017. But if a ride starts at Dec 2017 and ends at Jan 2018 then its a valid ride.
+-- In Jan 2018 , 110 rides were recorded(drop off). From the previous table, in Jan 2018 4 rides were recorded(pick up).So 110-4=106 rides were started before Jan and 
+-- ended in Jan. So there are 11 records here that can be dopped.
+
+
+-- O3.You might have encountered unusual or erroneous rows in the dataset. 
+--    Can you conclude which vendor is doing a bad job in providing the records using different columns of the dataset?
+--    Summarise your conclusions based on every column where these errors are present.
+
+-- Checking columns to find invalid records:
+
+-- passenger_count column:-
+
+select passenger_count as numofpassengers, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by passenger_count
+order by passenger_count;
+
+-- numofpassengers     numofrecords
+-- 0                        6824
+-- 1                        827499 
+-- 2                        176872
+-- 3                        50693
+-- 4                        24951
+-- 5                        54568
+-- 6                        33146
+-- 7                        12
+-- 8                        3       
+-- 9                        1
+
+-- Assuming a taxi cannot accomodate more than 6 passengers and a ride should not be considered if the number of passengers is 0 there 6840 invalid records.
+-- So considering only numofpassengers between 1 and 6 for analysis.
+
+-- payment_type column:-
+
+select payment_type as paymenttype, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by payment_type
+order by payment_type;
+
+-- paymenttype      numofrecords
+--     1                790256
+--     2                376374
+--     3                 6274
+--     4                 1665
+
+-- All records are valid as all these payment types are there in the data dictionary.
+
+
+-- store_and_fwd_flag column:-
+
+select store_and_fwd_flag as store_and_forward_flag, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by store_and_fwd_flag;
+ 
+
+-- store_and_forward_flag  numofrecords
+--      N                    1170618
+--      Y                     3951
+
+-- All records are valid.
+
+-- improvement_surcharge column:-
+
+select improvement_surcharge as improvement_surcharge, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by improvement_surcharge
+order by improvement_surcharge;
+
+-- improvement_surcharge  numofrecords
+--      -0.3                   558
+--        0                    287
+--       0.3                   1173720
+--        1                    4
+
+-- improvement_surcharge can only take up the values 0 and 0.3. The rest are invalid records.
+
+-- mta_tax column:
+
+select mta_tax as mta_tax, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by mta_tax
+order by mta_tax;
+
+-- mta_tax  numofrecords
+--  -0.5        544
+--    0         5197
+--   0.5        1168824
+--    3         3
+--   11.4       1
+
+-- mta_tax is a $0.50 tax that is automatically triggered based on the metered rate in use. It can take up the values 0 and 0.50. The rest are invalid.
+
+-- extra column:
+
+select extra as extracharge, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by extra
+order by extra;
+
+-- extracharge  numofrecords
+--    -10.6         1
+--    -4.5          5
+--    -1            87
+--    -0.5          193
+--     0            631872
+--     0.3          36
+--     0.5          363455
+--     0.8          15
+--     1            172386
+--     1.3          13
+--     1.5          2
+--     2            1
+--     4.5          4502
+--     4.8          1
+
+-- extra- Miscellaneous extras and surcharges. Currently, this only includes the $0.50 and $1 rush hour and overnight charges.If no charges then 0. So it can
+-- take up the values 0,0.5 and 1. The rest are invalid records.
+
+-- RatecodeID column:
+
+select RatecodeID as RatecodeID, count(*) as numofrecords
+from assignment_nytaxi_aj.nyc_taxi
+group by RatecodeID
+order by RatecodeID;
+
+-- RatecodeID  numofrecords
+--    1         11442278
+--    2         25338
+--    3         2562
+--    4         586
+--    5         3793
+--    6         3
+--    99        9
+
+-- RatecodeID can only values 1-6 according to the data dictionary. The value 99 is invalid.
+
+-- To find which vendor is doing a bad job:-
+
+select vendorid as vendorid, count(*) as num_of_invalid_records
+from assignment_nytaxi_aj.nyc_taxi
+where (year(tpep_pickup_datetime) !=2017 or month(tpep_pickup_datetime) not in (11,12) or year(tpep_dropoff_datetime) !=2017 or month(tpep_dropoff_datetime) not in (11,12)
+or passenger_count not in (1,2,3,4,5,6) or trip_distance <= 0.0 or RatecodeID not in (1,2,3,4,5,6) or payment_type not in (1,2,3,4,5,6) 
+or fare_amount <= 0 or extra not in (0,0.5,1) or mta_tax not in(0,0.5) or improvement_surcharge not in (0,0.3) or total_amount <= 0)
+group by vendorid
+order by vendorid;
+
+-- vendorID   num_of_invalid_records
+--  1                12841
+--  2                6416
+
+-- vendorID 1(Creative Mobile Technologies) has provided 12841 invalid records while vendorID 2( Verifone INC) has provided 6416 invalid records.
+-- Hence vendorID 1 is doing a bad job in providing valid records.
+
+
+-- Before moving on to Analysis 1 and Analysis 2 , a clean ORC partitioned table has to be created.(which has no invalid records)
+
+Create external table if not exists assignment_nytaxi_aj.orcnyctaxi(
+tpep_pickup_datetime timestamp,
+tpep_dropoff_datetime timestamp,
+passenger_count int,
+trip_distance decimal(10,2),
+RatecodeID int,
+store_and_fwd_flag string,
+PULocationID int,
+DOLocationID int,
+payment_type int,
+fare_amount decimal(10,2),
+extra decimal(10,2),
+mta_tax decimal(10,2),
+tip_amount decimal(10,2),
+tolls_amount decimal(10,2),
+improvement_surcharge decimal(10,2),
+total_amount decimal(10,2)
+)
+partitioned by (Mnth int,VendorID int)
+stored as orc location '/user/ajay.tamvada_gmail/asssignment_nytaxi_aj'
+tblproperties ("orc.compress"="SNAPPY");
+
+insert overwrite table assignment_nytaxi_aj.orcnyctaxi partition(Mnth,VendorID)
+select 
+tpep_pickup_datetime,
+tpep_dropoff_datetime,
+passenger_count,
+trip_distance,
+RatecodeID,
+store_and_fwd_flag,
+PULocationID,
+DOLocationID,
+payment_type,
+fare_amount,
+extra,
+mta_tax,
+tip_amount,
+tolls_amount,
+improvement_surcharge,
+total_amount,
+month(tpep_pickup_datetime) Mnth,
+VendorID
+from assignment_nytaxi_aj.nyc_taxi
+where  (nyc_taxi.tpep_pickup_datetime >='2017-11-1 00:00:00.0' and nyc_taxi.tpep_pickup_datetime<'2018-01-01 00:00:00.0') and -- selecting all records between Nov 1st 2017 and Jan 1st 2018
+( nyc_taxi.tpep_dropoff_datetime >= '2017-11-1 00:00:00.0' and nyc_taxi.tpep_dropoff_datetime<'2018-01-02 00:00:00.0') and
+(nyc_taxi.tpep_dropoff_datetime>nyc_taxi.tpep_pickup_datetime) and
+(passenger_count in (1,2,3,4,5,6) and
+(trip_distance>0) and 
+(ratecodeid!=99) and
+(fare_amount>0 ) and
+ (extra in (0,0.5,1)) and
+ (mta_tax  in (0,0.5)) and 
+((tip_amount >=0 and Payment_type=1) or (Payment_type!=1 and tip_amount=0)) and -- since Tip amount – This field is automatically populated for credit card tips. Cash tips are not included.
+( tolls_amount >=0) and
+( improvement_surcharge in (0,0.3)) and
+( total_amount>0 ));
+
+-- Analysis 1 :-
+
+-- Q1. Compare the overall average fare per trip for November and December.
+
+select mnth,round(avg(fare_amount),2)
+from assignment_nytaxi_aj.orcnyctaxi
+group by mnth;
+
+-- month   avg fare amount
+--  11          12.91
+--  12          12.7
+
+-- O2. Explore the ‘number of passengers per trip’ - how many trips are made by each level of ‘Passenger_count’? Do most people travel solo or with other people?
+
+select count(*) from assignment_nytaxi_aj.orcnyctaxi;
+-- 1153584
+select passenger_count as numofpassengers, count(*)as numofrecords
+from assignment_nytaxi_aj.orcnyctaxi
+group by passenger_count
+order by passenger_count;
+
+-- numofpassengers   numofrecords
+--      1              817019
+--      2              174783
+--      3              50183
+--      4              24680
+--      5              54037
+--      6              32882
+
+-- people travelling solo - 817019, people travelling in groups - 174783+50183+24680+54037+32882= 336565. 
+-- Hence most people like to travel solo. 
+
+-- Q3. Which is the most preferred mode of payment?
+ 
+select payment_type as paymentmode, count(*) as numofrecords
+from assignment_nytaxi_aj.orcnyctaxi
+group by payment_type
+order by numofrecords desc;
+
+-- paymentmode    numofrecords
+--     1            779150
+--     2            368659
+--     3            4480
+--     4            1295
+
+-- Most preferred payment mode is 1(Credit Card) and then 2(Cash).
+
+-- Q4.What is the average tip paid per trip? Compare the average tip with the 25th, 50th and 75th percentiles 
+--    and comment whether the ‘average tip’ is a representative statistic (of the central tendency) of ‘tip amount paid’.
+
+select round(avg(tip_amount),2) , percentile_approx(tip_amount,array(0.25,0.50,0.75))  
+from assignment_nytaxi_aj.orcnyctaxi;
+
+-- averagetip  25th   50th    75th
+--  1.83        0     1.36    2.45
+-- The median 1.36 is lower as compared to the avg 1.83 because of skewness towards the right side( higher values).
+-- Hence the average tip is not a reprsentative statstic.
+
+-- Q5.Explore the ‘Extra’ (charge) variable - what fraction of total trips have an extra charge is levied?
+
+select extra as extracharge, count(*)as numofrecords
+from assignment_nytaxi_aj.orcnyctaxi
+group by extra
+order by extra;
+
+-- extracharge   numofrecords
+--  0              621257 
+--  0.5            359816     
+--  1              172511
+
+-- Total number of records having extracharge-359816+172511=532327. Total number of records -1153584 
+-- Hence percentage- 532327/1153584=0.461= 46.1% of the trips have extracharge.
+
+-- Analysis 2 :-
+
+-- Q1.What is the correlation between the number of passengers on any given trip, and the tip paid per trip? Do multiple travellers tip more compared to solo travellers?
+select round(corr(passenger_count, tip_amount),2) 
+from assignment_nytaxi_aj.orcnyctaxi;
+
+-- Correlation between number of passengers and the tip- -0.01
+
+select round(avg(CASE when passenger_count=1 then tip_amount else null end),3) as soloaveragetip,
+round(avg(CASE when passenger_count != 1 then tip_amount else null end),3) as multipleaveragetip
+from assignment_nytaxi_aj.orcnyctaxi
+where payment_type != 2;
+
+-- soloaveragetip-2.661, multipleaveragetip-2.741
+-- Multiple travellers tip a bit more than solo travellers.
+
+--Q2.Segregate the data into five segments of ‘tip paid’: [0-5), [5-10), [10-15) , [15-20) and >=20.
+--   Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+
+select T.tippaid,count(*) as numofrecords
+from (select 
+case when (tip_amount>=0 and tip_amount<5)   then '[0-5)' 
+     when (tip_amount>=5 and tip_amount<10)  then '[5-10)' 
+     when (tip_amount>=10 and tip_amount<15) then '[10-15)'
+     when (tip_amount>=15 and tip_amount<20) then '[15-20)'
+     when (tip_amount>=20)                   then '>=20' end tippaid
+     from assignment_nytaxi_aj.orcnyctaxi) T 
+group by T.tippaid; 
+
+-- t.tippaid     numofrecords
+-- >=20             1016
+-- [0-5)            1065956
+-- [10-15)          19413
+-- [15-20)          2160
+-- [5-10)           65039
+
+-- percentage calucaltion- 
+-- i) >=20 - 1016/1153584= 0.088%
+-- ii)[0-5) - 1065956/1153584= 92.40%
+-- iii)[5-10) - 65039/1153584= 5.63%
+-- iv)[10-15) - 19413/1153584= 1.68%
+-- v)[15-20) - 2160/1153584= 0.18%
+
+-- Q3. Which month has a greater average ‘speed’ - November or December? Note that the variable ‘speed’ will have to be derived from other metrics.
+
+select mnth , round(avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )/3600) ),2) avgspeed
+from assignment_nytaxi_aj.orcnyctaxi
+group by mnth
+order by avgspeed desc;
+
+-- mnth   avgspeed
+-- 12      11.07 mph
+-- 11      10.97 mph
+-- December has a greater average speed.
+
+-- Q4. Analyse the average speed of the most happening days of the year, i.e. 31st December (New year’s eve) and 25th December (Christmas) and compare it with the overall average. 
+
+select dayy,round(avg(trip_distance/((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )/3600)),2) avg_speed
+from ( 
+select trip_distance,tpep_dropoff_datetime,tpep_pickup_datetime,
+case when ((tpep_pickup_datetime>='2017-12-25 00:00:00.0' and tpep_pickup_datetime<'2017-12-26 00:00:00.0')) then 1
+when ((tpep_pickup_datetime>='2017-12-31 00:00:00.0' and tpep_pickup_datetime<'2018-01-01 00:00:00.0')  ) then 2 else 0 end dayy 
+from assignment_nytaxi_aj.orcnyctaxi
+) T1
+group by dayy;
+
+-- dayy                  avg_speed
+-- 0 (Normal days)          10.95 mph
+-- 1 (Christmas)            15.27 mph   
+-- 2 (New Year's Eve)       13.24 mph
+
+--The fastest average  speed is on chrismatas day- 15.27mph.
